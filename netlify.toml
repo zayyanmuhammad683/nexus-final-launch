@@ -1,0 +1,87 @@
+[build]
+  functions = "netlify/functions"
+  command = "# no build command"
+
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200```
+4. **Commit the new file**.
+
+#### **File 4: The Server Function**
+
+This requires creating folders. Follow this carefully.
+
+1.  Go back to the main repository page. Tap **Add file** -> **Create new file**.
+2.  In the file name box, type **`netlify/functions/merge-pdf.js`**.
+3.  When you type the `/`, GitHub will automatically create the folders.
+4.  Paste this **new, Netlify-specific server code** into the editor.
+
+```javascript
+// This is the correct code for netlify/functions/merge-pdf.js
+
+const { PDFDocument } = require('pdf-lib');
+const formidable = require('formidable');
+const fs = require('fs/promises');
+
+exports.handler = async (event, context) => {
+  // Netlify functions only run on POST for this setup
+  if (event.httpMethod !== 'POST') {
+    return {
+      statusCode: 405,
+      body: 'Method Not Allowed',
+    };
+  }
+
+  try {
+    const files = await new Promise((resolve, reject) => {
+      const form = formidable();
+      // event.body contains the raw data from the upload
+      form.parse(event.body, (err, fields, files) => {
+        if (err) {
+          return reject(err);
+        }
+        resolve(files);
+      });
+    });
+
+    const pdfFileList = files.files;
+
+    if (!pdfFileList || pdfFileList.length < 2) {
+      return {
+        statusCode: 400,
+        body: JSON.stringify({ error: 'Please upload at least two PDF files.' }),
+      };
+    }
+    
+    const mergedPdf = await PDFDocument.create();
+    for (const file of pdfFileList) {
+      const pdfBytes = await fs.readFile(file.filepath);
+      const pdf = await PDFDocument.load(pdfBytes);
+      const copiedPages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
+      copiedPages.forEach((page) => {
+        mergedPdf.addPage(page);
+      });
+    }
+
+    const mergedPdfBytes = await mergedPdf.save();
+    
+    // Return the file correctly for Netlify
+    return {
+      statusCode: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': 'attachment; filename="merged.pdf"',
+      },
+      body: Buffer.from(mergedPdfBytes).toString('base64'),
+      isBase64Encoded: true,
+    };
+
+  } catch (error) {
+    console.error("!!! SERVER CRASHED !!!", error);
+    return {
+      statusCode: 500,
+      body: JSON.stringify({ error: 'A critical server error occurred.' }),
+    };
+  }
+};
